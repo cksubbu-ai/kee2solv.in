@@ -1,0 +1,7 @@
+# robots.txt for Kee2Solv
+# Processes everything in local browsers
+
+User-agent: *
+Allow: /
+
+Sitemap: https://kee2solv.in/sitemap.xml

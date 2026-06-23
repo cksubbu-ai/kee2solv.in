@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  background-color: #F8FAFC !important;
+  color: #334155 !important;
+  font-family: 'Inter', sans-serif !important;
+}
+
+/* SLEEK INTERFACE LIGHT THEME OVERRIDES FOR DYNAMIC UTILITIES */
+.bg-neutral-950 {
+  background-color: #F8FAFC !important;
+}
+.bg-neutral-900 {
+  background-color: #ffffff !important;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05) !important;
+  border-radius: 1rem !important;
+}
+.border-neutral-800, .border-neutral-850, .border-neutral-750 {
+  border-color: #e2e8f0 !important;
+}
+
+/* Typography map */
+.text-neutral-100, .text-neutral-105, .text-neutral-200, .text-neutral-250, .text-neutral-300 {
+  color: #0f172a !important; /* text-slate-900 */
+}
+.text-neutral-400, .text-neutral-450 {
+  color: #64748b !important; /* text-slate-500 */
+}
+.text-neutral-500, .text-neutral-600 {
+  color: #94a3b8 !important; /* text-slate-400 */
+}
+
+/* Accents (Lime elements map to Royal Blue-600) */
+.text-lime-400, .text-lime-500, .text-emerald-400, .text-cyan-400, .text-amber-400, .text-pink-400, .text-sky-400 {
+  color: #2563eb !important; /* text-blue-600 */
+}
+.bg-lime-950\/20, .bg-lime-950 {
+  background-color: #eff6ff !important; /* bg-blue-50 */
+}
+.border-lime-500\/20 {
+  border-color: #bfdbfe !important; /* border-blue-200 */
+}
+.hover\:border-lime-400:hover {
+  border-color: #2563eb !important;
+}
+.focus\:border-lime-400:focus {
+  border-color: #2563eb !important;
+}
+
+/* Fix Inputs & Inputs Focus for Tool Forms */
+input[type="text"], input[type="number"], select, textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 0.5rem !important;
+}
+input[type="text"]:focus, input[type="number"]:focus, select:focus, textarea:focus {
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1) !important;
+  outline: none !important;
+}
+
+/* Fix Pre blocks for copy code */
+pre, code {
+  background-color: #f1f5f9 !important;
+  border: 1px solid #e2e8f0 !important;
+  color: #0f172a !important;
+}
+pre .text-lime-400, code .text-lime-400 {
+  color: #0f172a !important; /* Plain clean dark font for config output views */
+}
+
+/* Special button highlights in workspace tools */
+.bg-neutral-950\/55, .bg-neutral-950\/40 {
+  background-color: #f8fafc !important;
+}

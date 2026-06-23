@@ -1,0 +1,6 @@
+{
+  "name": "Kee2Solv Toolkit Hub",
+  "description": "A privacy-first collection of free client-side utility tools for PDFs, image processing, marketing parameter builders, and financial planners.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
