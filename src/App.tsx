@@ -188,15 +188,27 @@ export default function App() {
       default:
         return (
           <div className="space-y-10 animate-fade-in">
-            {/* Minimal Display Greeting */}
-            <section className="border-b border-slate-200 pb-8" aria-labelledby="main-heading">
-              <h1 id="main-heading" className="text-3xl font-extrabold tracking-tight text-slate-900 leading-tight">
-                Kee2Solv Free Privacy-First Web Utilities
-              </h1>
-              <p className="text-slate-500 text-sm mt-2 max-w-2xl leading-relaxed">
-                Secure browser-based tools for compiling PDFs, cropping and converting images, formatting UTM campaigns, and calculating mutual fund yields. Everything runs 100% serverlessly with zero uploads.
-              </p>
-            </section>
+             {/* Minimal Display Greeting & Responsive Search Banner */}
+             <section className="border-b border-slate-200 pb-8 animate-fade-in" aria-labelledby="main-heading">
+               <h1 id="main-heading" className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 leading-tight">
+                 Kee2Solv Free Privacy-First Web Utilities
+               </h1>
+               <p className="text-slate-500 text-sm mt-2 max-w-2xl leading-relaxed">
+                 Secure browser-based tools for compiling PDFs, cropping and converting images, formatting UTM campaigns, and calculating mutual fund yields. Everything runs 100% serverlessly with zero uploads.
+               </p>
+
+               {/* Tactile, highly responsive Mobile-First Search Bar */}
+               <div className="mt-6 relative max-w-lg w-full">
+                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+                 <input
+                   type="text"
+                   value={searchQuery}
+                   onChange={(e) => setSearchQuery(e.target.value)}
+                   placeholder="Search all local browser utilities..."
+                   className="w-full bg-white border border-slate-200 rounded-full py-3.5 pl-11 pr-4 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 shadow-sm transition"
+                 />
+               </div>
+             </section>
 
             {/* Category Directory */}
             <div className="space-y-12">
@@ -315,7 +327,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* Quick Search */}
+          {/* Quick Search - hidden on mobile, highly visible on desktops */}
           <div className="relative max-w-sm w-full hidden md:block">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
             <input
@@ -330,22 +342,23 @@ export default function App() {
             />
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* 100% Privacy-First pulsing green badge */}
-            <div className="flex items-center gap-2 px-3 py-1 bg-green-50 text-green-700 border border-green-200 rounded-full text-[10px] font-bold tracking-wider uppercase shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* 100% Privacy-First pulsing green badge - hidden on very small screens */}
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-green-50 text-green-700 border border-green-200 rounded-full text-[10px] font-bold tracking-wider uppercase shrink-0">
               <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
-              100% Privacy-First
+              100% Private
             </div>
 
             <button
               onClick={() => handleToolClick("about-us")}
-              className={`px-3 py-1.5 border rounded-lg text-[10px] font-sans uppercase tracking-wider font-bold transition flex items-center gap-1 cursor-pointer ${
+              className={`px-3 py-1.5 border rounded-lg text-[10px] font-sans uppercase tracking-wider font-bold transition flex items-center gap-1 cursor-pointer shrink-0 ${
                 activeTab === "about-us"
                   ? "bg-blue-600 border-blue-600 text-white shadow-sm"
                   : "bg-white border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50"
               }`}
             >
-              <BookOpen className="h-3.5 w-3.5" /> Manifesto
+              <BookOpen className="h-3.5 w-3.5" />
+              <span>Manifesto</span>
             </button>
           </div>
         </div>
@@ -355,7 +368,7 @@ export default function App() {
       <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col md:flex-row gap-6">
         
         {/* Sidebar Nav */}
-        <aside className="w-full md:w-64 shrink-0 space-y-6">
+        <aside className="hidden md:block w-64 shrink-0 space-y-6">
           <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-6 shadow-sm">
             {TOOL_CATEGORIES.map((cat) => {
               const catTools = TOOLS_LIST.filter((t) => t.category === cat.id);
@@ -393,16 +406,20 @@ export default function App() {
 
         {/* Dynamic Workspace Block */}
         <section className="flex-grow min-w-0 space-y-8">
-          {/* Breadcrumbs for tool views */}
+          {/* Breadcrumbs for tool views - optimized with visual tags and 44px+ touch-friendly target back button */}
           {activeTab !== "home" && selectedTool && (
-            <div className="flex items-center gap-1.5 text-[10px] font-sans text-slate-400 uppercase tracking-wider mb-2">
-              <span onClick={() => handleToolClick("home")} className="hover:text-blue-600 transition cursor-pointer font-bold">
-                Home
-              </span>
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-[10px] font-sans text-slate-400 uppercase tracking-wider mb-2">
+              <button 
+                onClick={() => handleToolClick("home")}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-xl transition-colors cursor-pointer text-[10px] min-h-[36px]"
+              >
+                <Home className="h-3.5 w-3.5" />
+                <span>Back to Hub</span>
+              </button>
               <ChevronRight className="h-3.5 w-3.5 text-slate-300" />
-              <span>{getCategoryName(selectedTool.category)}</span>
-              <ChevronRight className="h-3.5 w-3.5 text-slate-300" />
-              <span className="text-blue-600 font-bold">{selectedTool.name}</span>
+              <span className="hidden sm:inline bg-slate-50 text-slate-500 px-2 py-2 rounded-lg text-[9px] font-semibold">{getCategoryName(selectedTool.category)}</span>
+              <ChevronRight className="hidden sm:inline h-3.5 w-3.5 text-slate-300" />
+              <span className="text-blue-600 font-extrabold bg-blue-50 px-3 py-2 rounded-lg text-[10px]">{selectedTool.name}</span>
             </div>
           )}
 
@@ -429,12 +446,12 @@ export default function App() {
       </main>
 
       {/* Footer Status Bar */}
-      <footer className="h-12 bg-white border-t border-slate-200 px-8 flex items-center justify-between text-[10px] text-slate-400 font-bold uppercase tracking-widest shrink-0 mt-12 shadow-sm">
-        <div className="flex gap-8">
+      <footer className="py-6 bg-white border-t border-slate-200 px-4 sm:px-8 flex flex-col md:flex-row items-center justify-between gap-4 text-[10px] text-slate-400 font-bold uppercase tracking-widest shrink-0 mt-12 shadow-sm">
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-8 items-center text-center">
           <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div> Local Node: Online</span>
           <span>Cloud Sync: Disabled</span>
         </div>
-        <div className="flex gap-6">
+        <div className="flex gap-6 items-center">
           <a onClick={() => handleToolClick("about-us")} className="hover:text-slate-600 transition-colors cursor-pointer">Manifesto</a>
           <a onClick={() => handleToolClick("home")} className="hover:text-slate-600 transition-colors cursor-pointer font-bold text-blue-600">Kee2Solv.in © 2026</a>
         </div>
