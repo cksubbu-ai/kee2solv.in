@@ -8,6 +8,8 @@ export type ActiveTab =
   | "pdf-merger"
   | "pdf-splitter"
   | "pdf-compressor"
+  | "pdf-editor"
+  | "pdf-converter"
   | "image-converter"
   | "image-resizer"
   | "background-remover"

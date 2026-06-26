@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Layers,
   Scissors,
@@ -27,15 +27,21 @@ import {
   Home,
   Info,
   ChevronRight,
+  ChevronDown,
   BookOpen,
-  Lock
+  Lock,
+  PenTool,
+  FilePlus
 } from "lucide-react";
 
 import { ActiveTab, ToolDefinition } from "./types";
 import { TOOLS_LIST, TOOL_CATEGORIES, TOOL_FAQS } from "./data";
+import { trackPageView } from "./utils/analytics";
 
 // Import compiled modular components
 import { PdfMerger, PdfSplitter, PdfCompressor } from "./components/DocumentTools";
+import { PdfEditor } from "./components/PdfEditor";
+import { PdfConverter } from "./components/PdfConverter";
 import { ImageConverter, ImageResizer, BackgroundRemover, SvgEditor } from "./components/ImageTools";
 import {
   UtmBuilder,
@@ -57,11 +63,44 @@ import {
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("home");
   const [searchQuery, setSearchQuery] = useState("");
+  const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({
+    documents: false,
+    images: false,
+    marketing: false,
+    finance: false,
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const isMobile = window.innerWidth < 768;
+      setCollapsedCategories({
+        documents: isMobile,
+        images: isMobile,
+        marketing: isMobile,
+        finance: isMobile,
+      });
+    }
+  }, []);
+
+  const toggleCategory = (catId: string) => {
+    setCollapsedCategories((prev) => ({
+      ...prev,
+      [catId]: !prev[catId],
+    }));
+  };
 
   const handleToolClick = (id: ActiveTab) => {
     setActiveTab(id);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+
+  // Track activeTab changes for Google Analytics
+  useEffect(() => {
+    const tool = TOOLS_LIST.find((t) => t.id === activeTab);
+    const title = tool ? tool.name : activeTab === "home" ? "Home — Kee2Solv" : activeTab;
+    const path = activeTab === "home" ? "/" : `/${activeTab}`;
+    trackPageView(path, title);
+  }, [activeTab]);
 
   // Helper to resolve clean categories representation
   const getCategoryName = (catKey: string) => {
@@ -88,6 +127,10 @@ export default function App() {
         return <Scissors className="h-4 w-4 text-emerald-400" />;
       case "FileDown":
         return <FolderDown className="h-4 w-4 text-sky-400" />;
+      case "PenTool":
+        return <PenTool className="h-4 w-4 text-pink-400" />;
+      case "FilePlus":
+        return <FilePlus className="h-4 w-4 text-teal-400" />;
       case "Image":
         return <Image className="h-4 w-4" />;
       case "Maximize":
@@ -134,6 +177,10 @@ export default function App() {
         return <PdfSplitter />;
       case "pdf-compressor":
         return <PdfCompressor />;
+      case "pdf-editor":
+        return <PdfEditor />;
+      case "pdf-converter":
+        return <PdfConverter />;
       case "image-converter":
         return <ImageConverter />;
       case "image-resizer":
@@ -211,55 +258,84 @@ export default function App() {
              </section>
 
             {/* Category Directory */}
-            <div className="space-y-12">
+            <div className="space-y-6 sm:space-y-10">
               {TOOL_CATEGORIES.map((cat) => {
                 const catTools = filteredTools.filter((t) => t.category === cat.id);
                 if (catTools.length === 0) return null;
 
+                const isCollapsed = searchQuery.trim() === "" ? collapsedCategories[cat.id] : false;
+
                 return (
-                  <div key={cat.id} className="space-y-6">
-                    <div className="flex items-center gap-3">
-                      <h2 className="text-sm font-bold font-sans text-slate-900">
-                        {cat.name}
-                      </h2>
-                      <div className="flex-grow h-px bg-slate-100" />
+                  <div 
+                    key={cat.id} 
+                    className={`transition-all duration-300 ${
+                      isCollapsed 
+                        ? "border border-slate-200/80 bg-white hover:bg-slate-50/50 shadow-sm p-4 rounded-xl md:border-transparent md:bg-transparent md:p-0 md:shadow-none" 
+                        : "border border-slate-100/80 bg-slate-50/30 p-4 rounded-2xl md:border-transparent md:bg-transparent md:p-0 md:shadow-none space-y-5"
+                    }`}
+                  >
+                    <div
+                      onClick={() => toggleCategory(cat.id)}
+                      className="flex items-center justify-between gap-3 cursor-pointer group/header select-none py-1"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-2 h-2 rounded-full shrink-0 ${
+                          cat.id === "documents" ? "bg-red-500 animate-pulse" :
+                          cat.id === "images" ? "bg-orange-500 animate-pulse" :
+                          cat.id === "marketing" ? "bg-blue-500 animate-pulse" :
+                          "bg-emerald-500 animate-pulse"
+                        }`} />
+                        <h2 className="text-xs sm:text-sm font-extrabold font-sans text-slate-900 group-hover/header:text-blue-600 transition-colors uppercase tracking-wider">
+                          {cat.name}
+                        </h2>
+                        <span className="text-[10px] font-bold text-slate-500 bg-white border border-slate-200/80 px-2 py-0.5 rounded-full shrink-0 shadow-xs">
+                          {catTools.length} {catTools.length === 1 ? "tool" : "tools"}
+                        </span>
+                      </div>
+                      <div className="flex-grow h-px bg-slate-200/60" />
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-extrabold uppercase tracking-wider shrink-0 bg-white border border-slate-200 px-3 py-1.5 rounded-full shadow-sm group-hover/header:border-slate-300 group-hover/header:text-slate-800 transition-all duration-150">
+                        <span className="hidden sm:inline">{isCollapsed ? "Expand" : "Collapse"}</span>
+                        <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-300 ${isCollapsed ? "" : "rotate-180"}`} />
+                      </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                      {catTools.map((tool) => (
-                        <div
-                          key={tool.id}
-                          onClick={() => handleToolClick(tool.id)}
-                          className="bg-white border border-slate-200 hover:border-blue-600 hover:shadow-md p-5 rounded-2xl cursor-pointer transition-all duration-200 flex flex-col justify-between group"
-                        >
-                          <div className="space-y-4">
-                            <div className="flex items-center gap-2.5">
-                              <div className={`w-10 h-10 ${
-                                tool.category === "documents" ? "bg-red-50 text-red-650" :
-                                tool.category === "images" ? "bg-orange-50 text-orange-650" :
-                                tool.category === "marketing" ? "bg-blue-50 text-blue-650" :
-                                "bg-emerald-50 text-emerald-650"
-                              } rounded-xl flex items-center justify-center`}>
-                                {getToolIcon(tool.icon)}
+                    {!isCollapsed && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 animate-fade-in">
+                        {catTools.map((tool) => (
+                          <div
+                            key={tool.id}
+                             onClick={() => handleToolClick(tool.id)}
+                            className="bg-white border border-slate-200 hover:border-blue-600 hover:shadow-md p-5 rounded-2xl cursor-pointer transition-all duration-200 flex flex-col justify-between group"
+                          >
+                            <div className="space-y-4">
+                              <div className="flex items-center gap-2.5">
+                                <div className={`w-10 h-10 ${
+                                  tool.category === "documents" ? "bg-red-50 text-red-650" :
+                                  tool.category === "images" ? "bg-orange-50 text-orange-650" :
+                                  tool.category === "marketing" ? "bg-blue-50 text-blue-650" :
+                                  "bg-emerald-50 text-emerald-650"
+                                } rounded-xl flex items-center justify-center`}>
+                                  {getToolIcon(tool.icon)}
+                                </div>
+                              </div>
+                              <div>
+                                <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
+                                  {tool.name}
+                                </h3>
+                                <p className="text-xs text-slate-500 mt-2 leading-relaxed line-clamp-3">
+                                  {tool.description}
+                                </p>
                               </div>
                             </div>
-                            <div>
-                              <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
-                                {tool.name}
-                              </h3>
-                              <p className="text-xs text-slate-500 mt-2 leading-relaxed line-clamp-3">
-                                {tool.description}
-                              </p>
+
+                            <div className="mt-4 pt-4 border-t border-slate-100 flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase">
+                              <span>Click Here</span>
+                              <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-blue-600 group-hover:translate-x-1 transition" />
                             </div>
                           </div>
-
-                          <div className="mt-4 pt-4 border-t border-slate-100 flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase">
-                            <span>Click Here</span>
-                            <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-blue-600 group-hover:translate-x-1 transition" />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}

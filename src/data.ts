@@ -38,6 +38,22 @@ export const TOOLS_LIST: ToolDefinition[] = [
     icon: "FileDown",
     tags: ["pdf", "compress", "resize", "shrink"]
   },
+  {
+    id: "pdf-editor",
+    category: "documents",
+    name: "PDF Editor",
+    description: "Edit text layer on PDFs directly in your browser. Add new text elements, draw whiteouts, or place stamps cleanly.",
+    icon: "PenTool",
+    tags: ["pdf", "edit", "annotate", "text", "whiteout", "stamp"]
+  },
+  {
+    id: "pdf-converter",
+    category: "documents",
+    name: "PDF Converter",
+    description: "Convert images, text, HTML, CSVs, Excel spreadsheets, or Word docx files to clean standard PDFs client-side.",
+    icon: "FilePlus",
+    tags: ["pdf", "convert", "excel", "word", "csv", "eml", "images", "text"]
+  },
   // Images
   {
     id: "image-converter",
