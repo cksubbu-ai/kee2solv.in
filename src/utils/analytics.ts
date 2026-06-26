@@ -1,9 +1,11 @@
+/// <reference types="vite/client" />
+
 /**
  * Google Analytics Utilities for Kee2Solv
  * Handles client-side tracking dynamically and safely.
  */
 
-const GA_ID = (import.meta as any).env?.VITE_GA_ID || "";
+const GA_ID = import.meta.env.VITE_GA_ID || "";
 
 // Initialize GA script tag dynamically
 export function initAnalytics() {

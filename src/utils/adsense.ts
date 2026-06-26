@@ -1,10 +1,12 @@
+/// <reference types="vite/client" />
+
 /**
  * Google AdSense Utilities for Kee2Solv
  * Handles dynamic client-side AdSense script injection securely.
  */
 
 // Retrieve Google AdSense Publisher Client ID from environment variables
-const ADSENSE_ID = (import.meta as any).env?.VITE_ADSENSE_CLIENT_ID || "";
+const ADSENSE_ID = import.meta.env.VITE_ADSENSE_CLIENT_ID || "";
 
 /**
  * Initializes Google AdSense tag dynamically in the head of the document.
