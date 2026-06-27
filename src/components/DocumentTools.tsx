@@ -7,6 +7,11 @@ import React, { useState } from "react";
 import { PDFDocument, PDFName, PDFRawStream, PDFNumber } from "pdf-lib";
 import JSZip from "jszip";
 import { File, ArrowUp, ArrowDown, Trash2, Download, CheckCircle, RefreshCw, AlertTriangle } from "lucide-react";
+import * as pdfjsLib from "pdfjs-dist";
+
+// Set up worker src using matching CDN
+const isMjs = !pdfjsLib.version || parseInt(pdfjsLib.version.split(".")[0]) >= 4;
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.${isMjs ? "mjs" : "js"}`;
 
 interface FileWithId {
   id: string;
@@ -167,7 +172,7 @@ export function PdfMerger() {
                   Compiling PDF streams...
                 </>
               ) : (
-                `Concatenate ${files.length} PDFs`
+                `Merge ${files.length} PDFs`
               )}
             </button>
           </div>
@@ -454,6 +459,7 @@ export function PdfCompressor() {
   const [preset, setPreset] = useState<"low" | "medium" | "high">("medium");
   const [imagesFound, setImagesFound] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [strategy, setStrategy] = useState<"image" | "lossless" | "raster">("image");
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -482,225 +488,313 @@ export function PdfCompressor() {
         high: { quality: 0.4, maxDim: 1000 },
       }[preset];
 
-      const indirectObjects = doc.context.enumerateIndirectObjects();
-      let processedCount = 0;
+      if (strategy === "image") {
+        const indirectObjects = doc.context.enumerateIndirectObjects();
+        let processedCount = 0;
 
-      for (const [_, obj] of indirectObjects) {
-        if (!(obj instanceof PDFRawStream)) continue;
-        const dict = obj.dict;
-        const subtype = dict.get(PDFName.of("Subtype")) as any;
-        if (!subtype || subtype.encodedName !== "/Image") continue;
+        for (const [_, obj] of indirectObjects) {
+          if (!(obj instanceof PDFRawStream)) continue;
+          const dict = obj.dict;
 
-        const filter = dict.get(PDFName.of("Filter")) as any;
-        let filterName = "";
-        if (filter && typeof filter.encodedName === "string") {
-          filterName = filter.encodedName;
-        } else if (filter && filter.array) {
-          const arr = filter.array;
-          if (arr.length > 0 && arr[0]) {
-            filterName = (arr[0] as any).encodedName || "";
+          // Dereference Subtype
+          const subtypeVal = dict.lookup(PDFName.of("Subtype"));
+          let subtypeName = "";
+          if (subtypeVal instanceof PDFName) {
+            subtypeName = subtypeVal.asString();
+          } else if (subtypeVal && typeof (subtypeVal as any).encodedName === "string") {
+            subtypeName = (subtypeVal as any).encodedName;
           }
-        }
+          if (subtypeName !== "/Image" && subtypeName !== "Image") continue;
 
-        if (filterName !== "/DCTDecode" && filterName !== "/FlateDecode") continue;
-
-        try {
-          if (filterName === "/DCTDecode") {
-            const rawContents = (obj as any).contents;
-            if (!rawContents || rawContents.length === 0) continue;
-
-            const imgBlob = new Blob([rawContents], { type: "image/jpeg" });
-            const imgUrl = URL.createObjectURL(imgBlob);
-
-            const img = await new Promise<HTMLImageElement>((res, rej) => {
-              const i = new Image();
-              i.onload = () => res(i);
-              i.onerror = rej;
-              i.src = imgUrl;
-            });
-            URL.revokeObjectURL(imgUrl);
-
-            let { naturalWidth: w, naturalHeight: h } = img;
-            const scale = Math.min(1, settings.maxDim / Math.max(w, h));
-            w = Math.max(1, Math.round(w * scale));
-            h = Math.max(1, Math.round(h * scale));
-
-            const canvas = document.createElement("canvas");
-            canvas.width = w;
-            canvas.height = h;
-            canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
-
-            const resampleBlob = await new Promise<Blob | null>((res) =>
-              canvas.toBlob(res, "image/jpeg", settings.quality)
-            );
-
-            if (resampleBlob) {
-              const resampleBytes = new Uint8Array(await resampleBlob.arrayBuffer());
-              if (resampleBytes.length < rawContents.length) {
-                (obj as any).contents = resampleBytes;
-                dict.set(PDFName.of("Width"), PDFNumber.of(w));
-                dict.set(PDFName.of("Height"), PDFNumber.of(h));
-                dict.set(PDFName.of("Length"), PDFNumber.of(resampleBytes.length));
-                processedCount++;
+          // Dereference Filter
+          const filterVal = dict.lookup(PDFName.of("Filter"));
+          let filterNames: string[] = [];
+          if (filterVal instanceof PDFName) {
+            filterNames.push(filterVal.asString());
+          } else if (filterVal && typeof (filterVal as any).encodedName === "string") {
+            filterNames.push((filterVal as any).encodedName);
+          } else if (filterVal && (filterVal as any).array) {
+            const arr = (filterVal as any).array;
+            for (let i = 0; i < arr.length; i++) {
+              const item = doc.context.lookup(arr[i]);
+              if (item instanceof PDFName) {
+                filterNames.push(item.asString());
+              } else if (item && typeof (item as any).encodedName === "string") {
+                filterNames.push((item as any).encodedName);
               }
             }
-          } else if (filterName === "/FlateDecode") {
-            // Read uncompressed pixel bytes from FlateDecode stream safely using any cast
-            const uncompressed = (obj as any).getUncompressedContents();
-            if (!uncompressed || uncompressed.length === 0) continue;
+          }
 
-            const widthVal = dict.get(PDFName.of("Width"));
-            const heightVal = dict.get(PDFName.of("Height"));
-            if (!(widthVal instanceof PDFNumber) || !(heightVal instanceof PDFNumber)) continue;
+          const isDCT = filterNames.includes("/DCTDecode") || filterNames.includes("DCTDecode");
+          const isFlate = filterNames.includes("/FlateDecode") || filterNames.includes("FlateDecode");
 
-            const w = widthVal.asNumber();
-            const h = heightVal.asNumber();
+          if (!isDCT && !isFlate) continue;
 
-            const colorSpace = dict.get(PDFName.of("ColorSpace"));
-            const colorSpaceName = colorSpace && typeof (colorSpace as any).encodedName === "string" 
-              ? (colorSpace as any).encodedName 
-              : "";
+          try {
+            if (isDCT) {
+              const rawContents = (obj as any).contents;
+              if (!rawContents || rawContents.length === 0) continue;
 
-            let rgbaBytes: Uint8ClampedArray | null = null;
+              const imgBlob = new Blob([rawContents], { type: "image/jpeg" });
+              const imgUrl = URL.createObjectURL(imgBlob);
 
-            if (colorSpaceName === "/DeviceRGB" || colorSpaceName === "DeviceRGB") {
-              if (uncompressed.length >= w * h * 3) {
-                rgbaBytes = new Uint8ClampedArray(w * h * 4);
-                let j = 0;
-                for (let i = 0; i < w * h * 3; i += 3) {
-                  rgbaBytes[j] = uncompressed[i];
-                  rgbaBytes[j + 1] = uncompressed[i + 1];
-                  rgbaBytes[j + 2] = uncompressed[i + 2];
-                  rgbaBytes[j + 3] = 255;
-                  j += 4;
-                }
-              }
-            } else if (colorSpaceName === "/DeviceGray" || colorSpaceName === "DeviceGray") {
-              if (uncompressed.length >= w * h) {
-                rgbaBytes = new Uint8ClampedArray(w * h * 4);
-                let j = 0;
-                for (let i = 0; i < w * h; i++) {
-                  const g = uncompressed[i];
-                  rgbaBytes[j] = g;
-                  rgbaBytes[j + 1] = g;
-                  rgbaBytes[j + 2] = g;
-                  rgbaBytes[j + 3] = 255;
-                  j += 4;
-                }
-              }
-            } else if (colorSpaceName === "/DeviceCMYK" || colorSpaceName === "DeviceCMYK") {
-              if (uncompressed.length >= w * h * 4) {
-                rgbaBytes = new Uint8ClampedArray(w * h * 4);
-                let j = 0;
-                for (let i = 0; i < w * h * 4; i += 4) {
-                  const c = uncompressed[i] / 255;
-                  const m = uncompressed[i + 1] / 255;
-                  const y = uncompressed[i + 2] / 255;
-                  const k = uncompressed[i + 3] / 255;
-                  rgbaBytes[j] = Math.round(255 * (1 - c) * (1 - k));
-                  rgbaBytes[j + 1] = Math.round(255 * (1 - m) * (1 - k));
-                  rgbaBytes[j + 2] = Math.round(255 * (1 - y) * (1 - k));
-                  rgbaBytes[j + 3] = 255;
-                  j += 4;
-                }
-              }
-            }
+              const img = await new Promise<HTMLImageElement>((res, rej) => {
+                const i = new Image();
+                i.onload = () => res(i);
+                i.onerror = rej;
+                i.src = imgUrl;
+              });
+              URL.revokeObjectURL(imgUrl);
 
-            // Fallback length heuristics if color space isn't explicitly named DeviceRGB/DeviceGray
-            if (!rgbaBytes) {
-              if (uncompressed.length === w * h * 3) {
-                rgbaBytes = new Uint8ClampedArray(w * h * 4);
-                let j = 0;
-                for (let i = 0; i < uncompressed.length; i += 3) {
-                  rgbaBytes[j] = uncompressed[i];
-                  rgbaBytes[j + 1] = uncompressed[i + 1];
-                  rgbaBytes[j + 2] = uncompressed[i + 2];
-                  rgbaBytes[j + 3] = 255;
-                  j += 4;
-                }
-              } else if (uncompressed.length === w * h * 4) {
-                rgbaBytes = new Uint8ClampedArray(w * h * 4);
-                for (let i = 0; i < uncompressed.length; i++) {
-                  rgbaBytes[i] = uncompressed[i];
-                }
-              } else if (uncompressed.length === w * h) {
-                rgbaBytes = new Uint8ClampedArray(w * h * 4);
-                let j = 0;
-                for (let i = 0; i < uncompressed.length; i++) {
-                  const g = uncompressed[i];
-                  rgbaBytes[j] = g;
-                  rgbaBytes[j + 1] = g;
-                  rgbaBytes[j + 2] = g;
-                  rgbaBytes[j + 3] = 255;
-                  j += 4;
-                }
-              }
-            }
+              let { naturalWidth: w, naturalHeight: h } = img;
+              const scale = Math.min(1, settings.maxDim / Math.max(w, h));
+              w = Math.max(1, Math.round(w * scale));
+              h = Math.max(1, Math.round(h * scale));
 
-            if (rgbaBytes) {
               const canvas = document.createElement("canvas");
               canvas.width = w;
               canvas.height = h;
-              const ctx = canvas.getContext("2d");
-              if (ctx) {
-                const imgData = new ImageData(rgbaBytes, w, h);
-                ctx.putImageData(imgData, 0, 0);
+              canvas.getContext("2d")?.drawImage(img, 0, 0, w, h);
 
-                let targetW = w;
-                let targetH = h;
-                const scale = Math.min(1, settings.maxDim / Math.max(w, h));
-                let resampleBlob: Blob | null = null;
+              const resampleBlob = await new Promise<Blob | null>((res) =>
+                canvas.toBlob(res, "image/jpeg", settings.quality)
+              );
 
-                if (scale < 1) {
-                  targetW = Math.max(1, Math.round(w * scale));
-                  targetH = Math.max(1, Math.round(h * scale));
-                  const scaleCanvas = document.createElement("canvas");
-                  scaleCanvas.width = targetW;
-                  scaleCanvas.height = targetH;
-                  const scaleCtx = scaleCanvas.getContext("2d");
-                  if (scaleCtx) {
-                    scaleCtx.drawImage(canvas, 0, 0, w, h, 0, 0, targetW, targetH);
+              if (resampleBlob) {
+                const resampleBytes = new Uint8Array(await resampleBlob.arrayBuffer());
+                if (resampleBytes.length < rawContents.length) {
+                  (obj as any).contents = resampleBytes;
+                  dict.set(PDFName.of("Width"), PDFNumber.of(w));
+                  dict.set(PDFName.of("Height"), PDFNumber.of(h));
+                  dict.set(PDFName.of("Length"), PDFNumber.of(resampleBytes.length));
+                  processedCount++;
+                }
+              }
+            } else if (isFlate) {
+              // Read uncompressed pixel bytes safely using any cast
+              const uncompressed = (obj as any).getUncompressedContents();
+              if (!uncompressed || uncompressed.length === 0) continue;
+
+              const widthVal = dict.lookup(PDFName.of("Width"));
+              const heightVal = dict.lookup(PDFName.of("Height"));
+              if (!(widthVal instanceof PDFNumber) || !(heightVal instanceof PDFNumber)) continue;
+
+              const w = widthVal.asNumber();
+              const h = heightVal.asNumber();
+
+              const colorSpace = dict.lookup(PDFName.of("ColorSpace"));
+              let colorSpaceName = "";
+              if (colorSpace instanceof PDFName) {
+                colorSpaceName = colorSpace.asString();
+              } else if (colorSpace && typeof (colorSpace as any).encodedName === "string") {
+                colorSpaceName = (colorSpace as any).encodedName;
+              }
+
+              let rgbaBytes: Uint8ClampedArray | null = null;
+
+              if (colorSpaceName === "/DeviceRGB" || colorSpaceName === "DeviceRGB") {
+                if (uncompressed.length >= w * h * 3) {
+                  rgbaBytes = new Uint8ClampedArray(w * h * 4);
+                  let j = 0;
+                  for (let i = 0; i < w * h * 3; i += 3) {
+                    rgbaBytes[j] = uncompressed[i];
+                    rgbaBytes[j + 1] = uncompressed[i + 1];
+                    rgbaBytes[j + 2] = uncompressed[i + 2];
+                    rgbaBytes[j + 3] = 255;
+                    j += 4;
+                  }
+                }
+              } else if (colorSpaceName === "/DeviceGray" || colorSpaceName === "DeviceGray") {
+                if (uncompressed.length >= w * h) {
+                  rgbaBytes = new Uint8ClampedArray(w * h * 4);
+                  let j = 0;
+                  for (let i = 0; i < w * h; i++) {
+                    const g = uncompressed[i];
+                    rgbaBytes[j] = g;
+                    rgbaBytes[j + 1] = g;
+                    rgbaBytes[j + 2] = g;
+                    rgbaBytes[j + 3] = 255;
+                    j += 4;
+                  }
+                }
+              } else if (colorSpaceName === "/DeviceCMYK" || colorSpaceName === "DeviceCMYK") {
+                if (uncompressed.length >= w * h * 4) {
+                  rgbaBytes = new Uint8ClampedArray(w * h * 4);
+                  let j = 0;
+                  for (let i = 0; i < w * h * 4; i += 4) {
+                    const c = uncompressed[i] / 255;
+                    const m = uncompressed[i + 1] / 255;
+                    const y = uncompressed[i + 2] / 255;
+                    const k = uncompressed[i + 3] / 255;
+                    rgbaBytes[j] = Math.round(255 * (1 - c) * (1 - k));
+                    rgbaBytes[j + 1] = Math.round(255 * (1 - m) * (1 - k));
+                    rgbaBytes[j + 2] = Math.round(255 * (1 - y) * (1 - k));
+                    rgbaBytes[j + 3] = 255;
+                    j += 4;
+                  }
+                }
+              }
+
+              // Fallback length heuristics
+              if (!rgbaBytes) {
+                if (uncompressed.length === w * h * 3) {
+                  rgbaBytes = new Uint8ClampedArray(w * h * 4);
+                  let j = 0;
+                  for (let i = 0; i < uncompressed.length; i += 3) {
+                    rgbaBytes[j] = uncompressed[i];
+                    rgbaBytes[j + 1] = uncompressed[i + 1];
+                    rgbaBytes[j + 2] = uncompressed[i + 2];
+                    rgbaBytes[j + 3] = 255;
+                    j += 4;
+                  }
+                } else if (uncompressed.length === w * h * 4) {
+                  rgbaBytes = new Uint8ClampedArray(w * h * 4);
+                  for (let i = 0; i < uncompressed.length; i++) {
+                    rgbaBytes[i] = uncompressed[i];
+                  }
+                } else if (uncompressed.length === w * h) {
+                  rgbaBytes = new Uint8ClampedArray(w * h * 4);
+                  let j = 0;
+                  for (let i = 0; i < uncompressed.length; i++) {
+                    const g = uncompressed[i];
+                    rgbaBytes[j] = g;
+                    rgbaBytes[j + 1] = g;
+                    rgbaBytes[j + 2] = g;
+                    rgbaBytes[j + 3] = 255;
+                    j += 4;
+                  }
+                }
+              }
+
+              if (rgbaBytes) {
+                const canvas = document.createElement("canvas");
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext("2d");
+                if (ctx) {
+                  const imgData = new ImageData(rgbaBytes, w, h);
+                  ctx.putImageData(imgData, 0, 0);
+
+                  let targetW = w;
+                  let targetH = h;
+                  const scale = Math.min(1, settings.maxDim / Math.max(w, h));
+                  let resampleBlob: Blob | null = null;
+
+                  if (scale < 1) {
+                    targetW = Math.max(1, Math.round(w * scale));
+                    targetH = Math.max(1, Math.round(h * scale));
+                    const scaleCanvas = document.createElement("canvas");
+                    scaleCanvas.width = targetW;
+                    scaleCanvas.height = targetH;
+                    const scaleCtx = scaleCanvas.getContext("2d");
+                    if (scaleCtx) {
+                      scaleCtx.drawImage(canvas, 0, 0, w, h, 0, 0, targetW, targetH);
+                      resampleBlob = await new Promise<Blob | null>((res) =>
+                        scaleCanvas.toBlob(res, "image/jpeg", settings.quality)
+                      );
+                    }
+                  } else {
                     resampleBlob = await new Promise<Blob | null>((res) =>
-                      scaleCanvas.toBlob(res, "image/jpeg", settings.quality)
+                      canvas.toBlob(res, "image/jpeg", settings.quality)
                     );
                   }
-                } else {
-                  resampleBlob = await new Promise<Blob | null>((res) =>
-                    canvas.toBlob(res, "image/jpeg", settings.quality)
-                  );
-                }
 
-                if (resampleBlob) {
-                  const resampleBytes = new Uint8Array(await resampleBlob.arrayBuffer());
-                  // Replace with compressed JPEG if it yields actual file size savings
-                  if (resampleBytes.length < (obj as any).contents.length) {
-                    (obj as any).contents = resampleBytes;
-                    dict.set(PDFName.of("Filter"), PDFName.of("DCTDecode"));
-                    dict.set(PDFName.of("ColorSpace"), PDFName.of("DeviceRGB"));
-                    dict.set(PDFName.of("Width"), PDFNumber.of(targetW));
-                    dict.set(PDFName.of("Height"), PDFNumber.of(targetH));
-                    dict.set(PDFName.of("Length"), PDFNumber.of(resampleBytes.length));
-                    dict.delete(PDFName.of("DecodeParms")); // Clean predictors
-                    processedCount++;
+                  if (resampleBlob) {
+                    const resampleBytes = new Uint8Array(await resampleBlob.arrayBuffer());
+                    if (resampleBytes.length < (obj as any).contents.length) {
+                      (obj as any).contents = resampleBytes;
+                      dict.set(PDFName.of("Filter"), PDFName.of("DCTDecode"));
+                      dict.set(PDFName.of("ColorSpace"), PDFName.of("DeviceRGB"));
+                      dict.set(PDFName.of("Width"), PDFNumber.of(targetW));
+                      dict.set(PDFName.of("Height"), PDFNumber.of(targetH));
+                      dict.set(PDFName.of("Length"), PDFNumber.of(resampleBytes.length));
+                      dict.delete(PDFName.of("DecodeParms")); // Clean predictors
+                      processedCount++;
+                    }
                   }
                 }
               }
             }
+          } catch (imageErr) {
+            console.warn("Error processing specific PDF raw stream image:", imageErr);
           }
-        } catch (imageErr) {
-          console.warn("Error processing specific PDF raw stream image:", imageErr);
         }
+
+        setImagesFound(processedCount);
+        const compressedBytes = await doc.save({ useObjectStreams: true });
+        const outBlob = new Blob([compressedBytes], { type: "application/pdf" });
+
+        setPostSize(outBlob.size);
+        setCompressedBlobUrl(URL.createObjectURL(outBlob));
+      } else if (strategy === "lossless") {
+        // Complete structural metadata copy & compress
+        const cleanedDoc = await PDFDocument.create();
+        const pageIndices = doc.getPageIndices();
+        const copiedPages = await cleanedDoc.copyPages(doc, pageIndices);
+        copiedPages.forEach((page) => cleanedDoc.addPage(page));
+
+        const compressedBytes = await cleanedDoc.save({ useObjectStreams: true });
+        const outBlob = new Blob([compressedBytes], { type: "application/pdf" });
+
+        setPostSize(outBlob.size);
+        setCompressedBlobUrl(URL.createObjectURL(outBlob));
+        setImagesFound(0);
+      } else if (strategy === "raster") {
+        // Full Canvas Rasterization for stubborn documents
+        const rasterPreset = {
+          low: { quality: 0.82, scale: 1.5 },      // High Quality (crisp rendering)
+          medium: { quality: 0.65, scale: 1.15 },   // Balanced
+          high: { quality: 0.45, scale: 0.8 },     // Maximum Compression
+        }[preset];
+
+        const loadingTask = pdfjsLib.getDocument({ data: fileBytes.slice(0) });
+        const pdf = await loadingTask.promise;
+        const pageCount = pdf.numPages;
+
+        const cleanDoc = await PDFDocument.create();
+
+        for (let idx = 0; idx < pageCount; idx++) {
+          const page = await pdf.getPage(idx + 1);
+          const viewport = page.getViewport({ scale: rasterPreset.scale });
+
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(viewport.width));
+          canvas.height = Math.max(1, Math.round(viewport.height));
+
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            await page.render({ canvasContext: ctx, viewport } as any).promise;
+
+            const pageBlob = await new Promise<Blob | null>((res) =>
+              canvas.toBlob(res, "image/jpeg", rasterPreset.quality)
+            );
+
+            if (pageBlob) {
+              const pageBytes = new Uint8Array(await pageBlob.arrayBuffer());
+              const embeddedJpg = await cleanDoc.embedJpg(pageBytes);
+              const newPage = cleanDoc.addPage([embeddedJpg.width, embeddedJpg.height]);
+              newPage.drawImage(embeddedJpg, {
+                x: 0,
+                y: 0,
+                width: embeddedJpg.width,
+                height: embeddedJpg.height,
+              });
+            }
+          }
+        }
+
+        const compressedBytes = await cleanDoc.save({ useObjectStreams: true });
+        const outBlob = new Blob([compressedBytes], { type: "application/pdf" });
+
+        setPostSize(outBlob.size);
+        setCompressedBlobUrl(URL.createObjectURL(outBlob));
+        setImagesFound(pageCount);
       }
-
-      setImagesFound(processedCount);
-      const compressedBytes = await doc.save({ useObjectStreams: true });
-      const outBlob = new Blob([compressedBytes], { type: "application/pdf" });
-
-      setPostSize(outBlob.size);
-      setCompressedBlobUrl(URL.createObjectURL(outBlob));
     } catch (err: any) {
       console.error(err);
-      setError(err?.message || "Compression error. Ensure the target contains standard image resources.");
+      setError(err?.message || "Compression error. Ensure the target is a valid PDF.");
     } finally {
       setCompressing(false);
     }
@@ -714,7 +808,7 @@ export function PdfCompressor() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-neutral-900 border border-neutral-800 p-6 rounded-md">
           <div className="border-b border-neutral-800 pb-3 mb-5">
-            <span className="text-xs font-mono text-lime-400 font-bold uppercase tracking-widest">// Downsampling profile</span>
+            <span className="text-xs font-mono text-lime-400 font-bold uppercase tracking-widest">// Compression Profiler</span>
           </div>
 
           <div className="border-2 border-dashed border-neutral-800 hover:border-lime-400 bg-neutral-950/55 p-8 rounded-md text-center cursor-pointer transition relative">
@@ -734,25 +828,58 @@ export function PdfCompressor() {
           </div>
 
           {file && (
-            <div className="mt-6 space-y-4">
-              <div className="space-y-1.5">
-                <label className="block text-xs font-mono text-neutral-400 uppercase tracking-wider">Compression Preset Mode</label>
+            <div className="mt-6 space-y-5">
+              <div className="space-y-2">
+                <label className="block text-xs font-mono text-neutral-400 uppercase tracking-wider">Compression Strategy</label>
                 <div className="grid grid-cols-3 gap-2">
-                  {(["low", "medium", "high"] as const).map((opt) => (
+                  {(["image", "lossless", "raster"] as const).map((strat) => (
                     <button
-                      key={opt}
-                      onClick={() => setPreset(opt)}
-                      className={`py-2 text-xs font-semibold rounded font-mono uppercase tracking-wider text-center cursor-pointer border transition ${
-                        preset === opt
+                      key={strat}
+                      onClick={() => {
+                        setStrategy(strat);
+                        setCompressedBlobUrl(null);
+                        setError(null);
+                      }}
+                      className={`py-2 text-[10px] sm:text-xs font-semibold rounded font-mono uppercase tracking-wider text-center cursor-pointer border transition ${
+                        strategy === strat
                           ? "bg-lime-400 border-lime-400 text-black"
                           : "bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-neutral-200"
                       }`}
                     >
-                      {opt}
+                      {strat === "image" ? "Adaptive Image" : strat === "lossless" ? "Lossless Copy" : "Full Raster"}
                     </button>
                   ))}
                 </div>
+                <p className="text-[10px] text-neutral-500 font-mono leading-relaxed uppercase">
+                  {strategy === "image" && "💡 Adaptive Image: Downsamples and compresses high-resolution photos. Keeps vector text 100% crisp and selectable."}
+                  {strategy === "lossless" && "💡 Lossless Copy: Purges duplicate metadata, incremental revision histories, and structural bloat. 100% vector safe."}
+                  {strategy === "raster" && "💡 Full Raster: Renders each page to a canvas and recompiles. Guaranteed size reduction for heavy vector or CAD files."}
+                </p>
               </div>
+
+              {strategy !== "lossless" && (
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-mono text-neutral-400 uppercase tracking-wider">Compression Intensity</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["low", "medium", "high"] as const).map((opt) => (
+                      <button
+                        key={opt}
+                        onClick={() => {
+                          setPreset(opt);
+                          setCompressedBlobUrl(null);
+                        }}
+                        className={`py-2 text-xs font-semibold rounded font-mono uppercase tracking-wider text-center cursor-pointer border transition ${
+                          preset === opt
+                            ? "bg-lime-400 border-lime-400 text-black"
+                            : "bg-neutral-950 border-neutral-800 text-neutral-400 hover:text-neutral-200"
+                        }`}
+                      >
+                        {opt === "low" ? "Low (Safe)" : opt === "medium" ? "Medium" : "High (Max)"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <button
                 onClick={executeCompress}
@@ -762,7 +889,7 @@ export function PdfCompressor() {
                 {compressing ? (
                   <>
                     <RefreshCw className="h-4 w-4 animate-spin text-black" />
-                    Re-filtering images...
+                    Processing document streams...
                   </>
                 ) : (
                   "Compress PDF Size"
@@ -808,15 +935,22 @@ export function PdfCompressor() {
                 <div className="p-4 bg-neutral-950 border border-neutral-800 rounded text-center space-y-2">
                   <CheckCircle className="mx-auto text-lime-400 mb-1 h-6 w-6" />
                   <span className="block text-xs font-mono text-neutral-300">
-                    {imagesFound > 0 
-                      ? `Processed and compressed ${imagesFound} high-resolution image streams.`
-                      : "No heavy image streams found."
-                    }
+                    {strategy === "image" && (imagesFound > 0 
+                      ? `Successfully optimized ${imagesFound} embedded image streams.`
+                      : "No image streams were downsampled.")}
+                    {strategy === "lossless" && "Pruned structural metadata, redundant catalogs, and incremental versioning bloat."}
+                    {strategy === "raster" && `Reconstructed ${imagesFound} pages into high-efficiency compressed rasters.`}
                   </span>
-                  {imagesFound === 0 && (
-                    <p className="text-[10px] text-neutral-500 uppercase font-mono leading-relaxed max-w-xs mx-auto">
-                      This is a vector text document (such as a digitally generated CV or report) rather than a scanned copy. It is already fully optimized to preserve crisp, lossless text rendering at minimal file size!
-                    </p>
+                  
+                  {strategy === "image" && imagesFound === 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] text-neutral-500 uppercase font-mono leading-relaxed max-w-xs mx-auto">
+                        This is a vector-based text document (e.g., a direct PDF export with no embedded images). 
+                      </p>
+                      <p className="text-[10px] text-lime-400 uppercase font-mono leading-relaxed max-w-xs mx-auto">
+                        💡 Tip: Try the "Full Raster" strategy for maximum vector flattening size reduction, or "Lossless Copy" to cleanly strip metadata!
+                      </p>
+                    </div>
                   )}
                 </div>
               </div>

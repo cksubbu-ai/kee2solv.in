@@ -21,7 +21,8 @@ import {
 } from "lucide-react";
 
 // Setup pdf.js worker using matching CDN
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+const isMjs = !pdfjsLib.version || parseInt(pdfjsLib.version.split(".")[0]) >= 4;
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.${isMjs ? "mjs" : "js"}`;
 
 interface EditItem {
   id: string;
@@ -66,6 +67,19 @@ interface PageData {
   textEdits: any[];
 }
 
+const rgbToHex = (rgbStr?: string, fallback: string = "#000000") => {
+  if (!rgbStr) return fallback;
+  if (rgbStr.startsWith("#")) return rgbStr;
+  const m = rgbStr.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+  if (m) {
+    const r = parseInt(m[1]).toString(16).padStart(2, "0");
+    const g = parseInt(m[2]).toString(16).padStart(2, "0");
+    const b = parseInt(m[3]).toString(16).padStart(2, "0");
+    return `#${r}${g}${b}`;
+  }
+  return fallback;
+};
+
 export function PdfEditor() {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -99,6 +113,10 @@ export function PdfEditor() {
     x: number;
     y: number;
     w: number;
+    isBold?: boolean;
+    isItalic?: boolean;
+    cssColor?: string;
+    cssBgColor?: string;
   } | null>(null);
 
   // Text modal placement state
@@ -169,7 +187,11 @@ export function PdfEditor() {
           const spanW = item.width * renderScale;
 
           const styleInfo = fontMap[item.fontName] || {};
-          const isBold = !!(styleInfo.bold || /bold/i.test(item.fontName || ""));
+          const isBold = !!(
+            styleInfo.bold ||
+            /bold|heavy|black|semibold|medium|w700|w800/i.test(item.fontName || "") ||
+            /bold/i.test(styleInfo.fontFamily || "")
+          );
           const isItalic = !!(styleInfo.italic || /italic|oblique/i.test(item.fontName || ""));
           const cssFontFamily = styleInfo.fontFamily || "serif";
 
@@ -186,8 +208,8 @@ export function PdfEditor() {
             isBold,
             isItalic,
             cssFontFamily,
-            cssColor: "rgb(0,0,0)",
-            cssBgColor: "rgb(255,255,255)",
+            cssColor: "#000000",
+            cssBgColor: "#ffffff",
             fontName: item.fontName || "",
           };
           pageTextEdits.push(entry);
@@ -221,24 +243,64 @@ export function PdfEditor() {
 
           await page.render({ canvasContext: ctx, viewport } as any).promise;
 
-          // Attempt to analyze rendered text colors from pixel samples
+          // Attempt to analyze rendered text colors and backgrounds from pixel samples
           p.textEdits.forEach((entry) => {
             try {
-              const samplePoints = [0.2, 0.5, 0.8];
-              let darkest = null;
-              let darkestBrightness = 255;
-              for (const frac of samplePoints) {
-                const sampleX = Math.min(Math.max(0, Math.round(entry.x + entry.w * frac)), p.pxW - 1);
-                const sampleY = Math.min(Math.max(0, Math.round(entry.y + entry.fontHeight * 0.5)), p.pxH - 1);
-                const px = ctx.getImageData(sampleX, sampleY, 1, 1).data;
-                const brightness = (px[0] + px[1] + px[2]) / 3;
-                if (brightness < darkestBrightness) {
-                  darkestBrightness = brightness;
-                  darkest = px;
-                }
+              // 1. Sample background color at several locations around the text bounding box (just outside)
+              const bgSamples = [
+                { x: entry.x - 3, y: entry.y + entry.fontHeight * 0.5 },
+                { x: entry.x + entry.w + 3, y: entry.y + entry.fontHeight * 0.5 },
+                { x: entry.x + entry.w * 0.5, y: entry.y - 3 },
+                { x: entry.x + entry.w * 0.5, y: entry.y + entry.fontHeight + 3 }
+              ];
+              
+              let bgR = 255, bgG = 255, bgB = 255;
+              let validBgCount = 0;
+              let sumR = 0, sumG = 0, sumB = 0;
+              
+              bgSamples.forEach((pt) => {
+                const sx = Math.min(Math.max(0, Math.round(pt.x)), p.pxW - 1);
+                const sy = Math.min(Math.max(0, Math.round(pt.y)), p.pxH - 1);
+                const px = ctx.getImageData(sx, sy, 1, 1).data;
+                sumR += px[0];
+                sumG += px[1];
+                sumB += px[2];
+                validBgCount++;
+              });
+              
+              if (validBgCount > 0) {
+                bgR = Math.round(sumR / validBgCount);
+                bgG = Math.round(sumG / validBgCount);
+                bgB = Math.round(sumB / validBgCount);
+                entry.cssBgColor = `rgb(${bgR},${bgG},${bgB})`;
               }
-              if (darkest && darkestBrightness < 180) {
-                entry.cssColor = `rgb(${darkest[0]},${darkest[1]},${darkest[2]})`;
+
+              // 2. Sample foreground (text) color by finding the pixel inside the box with max contrast to the background
+              const fgSamplePoints = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+              let bestFg = [0, 0, 0];
+              let maxDistSq = -1;
+              
+              fgSamplePoints.forEach((frac) => {
+                const sx = Math.min(Math.max(0, Math.round(entry.x + entry.w * frac)), p.pxW - 1);
+                // Sample at 3 different vertical levels inside the text line
+                [0.3, 0.5, 0.7].forEach((yFrac) => {
+                  const sy = Math.min(Math.max(0, Math.round(entry.y + entry.fontHeight * yFrac)), p.pxH - 1);
+                  const px = ctx.getImageData(sx, sy, 1, 1).data;
+                  const distSq = Math.pow(px[0] - bgR, 2) + Math.pow(px[1] - bgG, 2) + Math.pow(px[2] - bgB, 2);
+                  if (distSq > maxDistSq) {
+                    maxDistSq = distSq;
+                    bestFg = [px[0], px[1], px[2]];
+                  }
+                });
+              });
+
+              // Only set text color if we found a high contrast pixel, otherwise default to black/white contrast
+              if (maxDistSq > 300) {
+                entry.cssColor = `rgb(${bestFg[0]},${bestFg[1]},${bestFg[2]})`;
+              } else {
+                // Default high contrast color
+                const bgBrightness = (bgR + bgG + bgB) / 3;
+                entry.cssColor = bgBrightness > 127 ? "rgb(0,0,0)" : "rgb(255,255,255)";
               }
             } catch (colorErr) {
               // Fail-safe color sampling
@@ -352,6 +414,10 @@ export function PdfEditor() {
       x: entry.x,
       y: entry.y,
       w: entry.w,
+      isBold: entry.isBold,
+      isItalic: entry.isItalic,
+      cssColor: entry.cssColor || "#000000",
+      cssBgColor: entry.cssBgColor || "#ffffff",
     });
   };
 
@@ -375,11 +441,11 @@ export function PdfEditor() {
         wPx: Math.max(activeIte.w, 10),
         hPx: activeIte.entry.fontHeight + 4,
         fontHeight: activeIte.entry.fontHeight,
-        cssColor: activeIte.entry.cssColor,
-        cssBgColor: activeIte.entry.cssBgColor,
+        cssColor: activeIte.cssColor !== undefined ? activeIte.cssColor : (activeIte.entry.cssColor || "#000000"),
+        cssBgColor: activeIte.cssBgColor !== undefined ? activeIte.cssBgColor : (activeIte.entry.cssBgColor || "#ffffff"),
         cssFontFamily: activeIte.entry.cssFontFamily,
-        isBold: activeIte.entry.isBold,
-        isItalic: activeIte.entry.isItalic,
+        isBold: activeIte.isBold !== undefined ? activeIte.isBold : activeIte.entry.isBold,
+        isItalic: activeIte.isItalic !== undefined ? activeIte.isItalic : activeIte.entry.isItalic,
         fontName: activeIte.entry.fontName,
         item: activeIte.entry.item,
       };
@@ -487,11 +553,18 @@ export function PdfEditor() {
         return family.n;
       };
 
-      const parseColor = (rgbStr?: string) => {
-        if (!rgbStr) return rgb(0, 0, 0);
-        const m = rgbStr.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
-        if (m) {
-          return rgb(parseInt(m[1]) / 255, parseInt(m[2]) / 255, parseInt(m[3]) / 255);
+      const parseColor = (colorStr?: string) => {
+        if (!colorStr) return rgb(0, 0, 0);
+        const rgbMatch = colorStr.match(/rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/i);
+        if (rgbMatch) {
+          return rgb(parseInt(rgbMatch[1]) / 255, parseInt(rgbMatch[2]) / 255, parseInt(rgbMatch[3]) / 255);
+        }
+        if (colorStr.startsWith("#")) {
+          const hex = colorStr.replace("#", "");
+          const r = parseInt(hex.substring(0, 2), 16) || 0;
+          const g = parseInt(hex.substring(2, 4), 16) || 0;
+          const b = parseInt(hex.substring(4, 6), 16) || 0;
+          return rgb(r / 255, g / 255, b / 255);
         }
         return rgb(0, 0, 0);
       };
@@ -956,7 +1029,7 @@ export function PdfEditor() {
                               top: e.yPx,
                               minWidth: e.wPx,
                               height: e.hPx,
-                              backgroundColor: "#ffffff",
+                              backgroundColor: e.cssBgColor || "#ffffff",
                               zIndex: 10,
                             };
 
@@ -987,12 +1060,16 @@ export function PdfEditor() {
                                     // Re-open inline editor
                                     setActiveIte({
                                       id: e.id,
-                                      entry: e,
+                                      entry: e.entry || e,
                                       pageIdx: e.pageIdx,
                                       value: e.newStr || "",
                                       x: e.xPx,
                                       y: e.yPx,
                                       w: e.wPx || 10,
+                                      isBold: e.isBold,
+                                      isItalic: e.isItalic,
+                                      cssColor: e.cssColor || "#000000",
+                                      cssBgColor: e.cssBgColor || "#ffffff",
                                     });
                                   }}
                                   title="Click to re-edit modified text"
@@ -1088,7 +1165,7 @@ export function PdfEditor() {
             left: "50%",
             top: "40%",
             transform: "translate(-50%, -50%)",
-            minWidth: "280px",
+            minWidth: "300px",
             maxWidth: "90%",
           }}
         >
@@ -1102,7 +1179,7 @@ export function PdfEditor() {
           <textarea
             value={activeIte.value}
             onChange={(e) => setActiveIte({ ...activeIte, value: e.target.value })}
-            className="w-full h-20 bg-neutral-950 border border-neutral-800 text-neutral-100 p-2.5 rounded font-mono text-xs focus:outline-none focus:border-lime-400 resize-none"
+            className="w-full h-24 bg-neutral-950 border border-neutral-800 text-neutral-100 p-2.5 rounded font-mono text-xs focus:outline-none focus:border-lime-400 resize-none"
             spellCheck={false}
           />
 

@@ -4,17 +4,36 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     
-    <!-- Google tag (gtag.js) -->
-    <script async src="https://www.googletagmanager.com/gtag/js?id=%VITE_GA_ID%"></script>
+    <!-- Google Tag & AdSense Dynamic Loader -->
     <script>
-      window.dataLayer = window.dataLayer || [];
-      function gtag(){window.dataLayer.push(arguments);}
-      gtag('js', new Date());
-      gtag('config', '%VITE_GA_ID%');
+      (function() {
+        var gaId = "%VITE_GA_ID%";
+        if (gaId && gaId !== "%" + "VITE_GA_ID%" && gaId.trim() !== "") {
+          var gaScript = document.createElement("script");
+          gaScript.async = true;
+          gaScript.src = "https://www.googletagmanager.com/gtag/js?id=" + gaId;
+          document.head.appendChild(gaScript);
+
+          window.dataLayer = window.dataLayer || [];
+          window.gtag = function(){window.dataLayer.push(arguments);}
+          gtag('js', new Date());
+          gtag('config', gaId);
+        }
+
+        var adsenseId = "%VITE_ADSENSE_CLIENT_ID%";
+        if (!adsenseId || adsenseId === "%" + "VITE_ADSENSE_CLIENT_ID%" || adsenseId.trim() === "") {
+          adsenseId = "ca-pub-7357345116822299"; // Fallback to Kee2Solv's verified AdSense publisher ID
+        }
+        
+        if (adsenseId && adsenseId.trim() !== "") {
+          var adsenseScript = document.createElement("script");
+          adsenseScript.async = true;
+          adsenseScript.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=" + adsenseId;
+          adsenseScript.crossOrigin = "anonymous";
+          document.head.appendChild(adsenseScript);
+        }
+      })();
     </script>
-    
-    <!-- Google AdSense -->
-    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=%VITE_ADSENSE_CLIENT_ID%" crossorigin="anonymous"></script>
     
     <!-- Primary SEO Meta Tags -->
     <title>Kee2Solv — Free Privacy-First Browser Utilities (No Uploads)</title>
